@@ -1,15 +1,15 @@
-name: Temporary SSH Tunnel via ngrok (Password Auth)
+name: Temporary Dual Tunnel (SSH & V2Ray 443)
 
 on:
   workflow_dispatch: # يسمح بتشغيل المهمة يدويًا
     inputs:
       ssh_password:
-        description: 'كلمة المرور التي تريد استخدامها للاتصال عبر SSH (ستظهر في السجلات!)'
+        description: 'كلمة المرور للاتصال عبر SSH (ستظهر في السجلات!)'
         required: true
         default: 'MySecurePassword123'
 
 jobs:
-  ssh_tunnel:
+  dual_tunnel:
     runs-on: ubuntu-latest
     timeout-minutes: 360 # الحد الأقصى للتشغيل هو 6 ساعات
 
@@ -21,48 +21,69 @@ jobs:
       env:
         SSH_PASSWORD: ${{ github.event.inputs.ssh_password }}
       run: |
-        # 1. تثبيت OpenSSH Server
+        # هذا الجزء لتمكين وصول SSH بكلمة مرور (غير آمن)
         sudo apt update
         sudo apt install openssh-server -y
-        
-        # 2. تعيين كلمة المرور للمستخدم 'runner'
         echo "runner:$SSH_PASSWORD" | sudo chpasswd
-        
-        # 3. تعديل إعدادات SSH للسماح بالدخول بكلمة مرور
         sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
-        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/g' /etc/ssh/sshd_config
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config
-        
-        # 4. إعادة تشغيل خدمة SSH
         sudo service ssh restart
-        
-        echo "SSH setup complete. User 'runner' can connect with the provided password."
+        echo "SSH setup complete on port 22."
 
     - name: Install ngrok
       run: |
-        # تثبيت ngrok على العدّاد المستضاف من GitHub (Ubuntu)
+        # تثبيت ngrok
         curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt update && sudo apt install ngrok -y
 
-    - name: Connect ngrok and Get Public URL
+    - name: Connect ngrok to Dual Ports (SSH 22 & V2Ray 443)
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }} # استخدام الرمز السري
       run: |
-        # تفعيل الرمز المميز وبدء النفق على المنفذ 22 (SSH)
+        # تفعيل الرمز المميز
         ngrok authtoken $NGROK_AUTH_TOKEN
-        ngrok tcp 22 --log=stdout > ngrok.log &
-        sleep 10 # إعطاء وقت لـ ngrok للاتصال
-
-        # الحصول على رابط ngrok العام من واجهة برمجة التطبيقات المحلية
-        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*' | grep -o '[^"]*$')
         
-        echo "::notice file=ngrok_url.txt::The temporary public SSH address is: $NGROK_URL"
+        # بدء نفقين في الخلفية
+        # 1. نفق SSH على المنفذ 22
+        ngrok tcp 22 --log=stdout > ngrok_ssh.log &
+        # 2. نفق V2Ray على المنفذ 443
+        ngrok tcp 443 --log=stdout > ngrok_v2ray.log &
+        
+        sleep 15 # إعطاء وقت لـ ngrok للاتصال
+
+        # الحصول على روابط ngrok العامة من واجهة برمجة التطبيقات المحلية
+        TUNNELS_INFO=$(curl -s http://localhost:4040/api/tunnels)
+        
+        # استخراج بيانات SSH
+        SSH_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:22") | .public_url')
+        
+        # استخراج بيانات V2Ray
+        V2RAY_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:443") | .public_url')
+        
+        # التأكد من تثبيت jq
+        if [ -z "$SSH_URL" ] || [ -z "$V2RAY_URL" ]; then
+            sudo apt install jq -y
+            TUNNELS_INFO=$(curl -s http://localhost:4040/api/tunnels)
+            SSH_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:22") | .public_url')
+            V2RAY_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:443") | .public_url')
+        fi
+        
+        # عرض النتائج
         echo "------------------------------------------------"
-        echo "عنوان SSH العام المؤقت هو: $NGROK_URL"
+        echo "تم فتح نفقين بنجاح!"
+        echo "بيانات اتصال SSH (لـ Termius):"
+        echo "العنوان: $SSH_URL"
         echo "اسم المستخدم: runner"
         echo "كلمة المرور: ${{ github.event.inputs.ssh_password }}"
         echo "------------------------------------------------"
+        echo "بيانات اتصال V2Ray (للتكوين اليدوي):"
+        echo "العنوان: $V2RAY_URL"
+        echo "المنفذ الداخلي: 443"
+        echo "------------------------------------------------"
+        
+        echo "::notice file=ssh_info.txt::SSH Address: $SSH_URL"
+        echo "::notice file=v2ray_info.txt::V2Ray Address: $V2RAY_URL"
 
     - name: Keep Job Alive (Maximum 6 Hours)
       run: |

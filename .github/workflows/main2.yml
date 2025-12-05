@@ -1,4 +1,4 @@
-name: Temporary Dual Tunnel (SSH & V2Ray 443)
+name: Temporary Dual Tunnel (SSH & V2Ray 443) - Fixed
 
 on:
   workflow_dispatch: # يسمح بتشغيل المهمة يدويًا
@@ -30,12 +30,12 @@ jobs:
         sudo service ssh restart
         echo "SSH setup complete on port 22."
 
-    - name: Install ngrok
+    - name: Install ngrok and jq
       run: |
-        # تثبيت ngrok
+        # تثبيت ngrok و jq (لتحليل JSON)
         curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-        sudo apt update && sudo apt install ngrok -y
+        sudo apt update && sudo apt install ngrok jq -y
 
     - name: Connect ngrok to Dual Ports (SSH 22 & V2Ray 443)
       env:
@@ -44,30 +44,22 @@ jobs:
         # تفعيل الرمز المميز
         ngrok authtoken $NGROK_AUTH_TOKEN
         
-        # بدء نفقين في الخلفية
+        # بدء نفقين بأسماء محددة لضمان الفصل
         # 1. نفق SSH على المنفذ 22
-        ngrok tcp 22 --log=stdout > ngrok_ssh.log &
+        ngrok tcp 22 --log=stdout --label ssh-tunnel > ngrok_ssh.log &
         # 2. نفق V2Ray على المنفذ 443
-        ngrok tcp 443 --log=stdout > ngrok_v2ray.log &
+        ngrok tcp 443 --log=stdout --label v2ray-tunnel > ngrok_v2ray.log &
         
         sleep 15 # إعطاء وقت لـ ngrok للاتصال
 
         # الحصول على روابط ngrok العامة من واجهة برمجة التطبيقات المحلية
         TUNNELS_INFO=$(curl -s http://localhost:4040/api/tunnels)
         
-        # استخراج بيانات SSH
-        SSH_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:22") | .public_url')
+        # استخراج بيانات SSH باستخدام اسم النفق
+        SSH_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.name=="ssh-tunnel") | .public_url')
         
-        # استخراج بيانات V2Ray
-        V2RAY_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:443") | .public_url')
-        
-        # التأكد من تثبيت jq
-        if [ -z "$SSH_URL" ] || [ -z "$V2RAY_URL" ]; then
-            sudo apt install jq -y
-            TUNNELS_INFO=$(curl -s http://localhost:4040/api/tunnels)
-            SSH_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:22") | .public_url')
-            V2RAY_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.proto=="tcp" and .config.addr=="localhost:443") | .public_url')
-        fi
+        # استخراج بيانات V2Ray باستخدام اسم النفق
+        V2RAY_URL=$(echo $TUNNELS_INFO | jq -r '.tunnels[] | select(.name=="v2ray-tunnel") | .public_url')
         
         # عرض النتائج
         echo "------------------------------------------------"

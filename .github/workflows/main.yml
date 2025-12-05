@@ -1,0 +1,68 @@
+name: Temporary SSH Tunnel via ngrok
+
+on:
+  workflow_dispatch: # يسمح بتشغيل المهمة يدويًا
+
+jobs:
+  ssh_tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # الحد الأقصى للتشغيل هو 6 ساعات
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup SSH Access
+      env:
+        SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }} # مفتاح SSH العام للمستخدم
+      run: |
+        # 1. تثبيت OpenSSH Server (عادةً ما يكون مثبتًا مسبقًا)
+        sudo apt update
+        sudo apt install openssh-server -y
+        
+        # 2. التأكد من تشغيل خدمة SSH
+        sudo service ssh start
+        
+        # 3. إضافة مفتاح SSH العام للمستخدم إلى الملفات المصرح لها
+        mkdir -p ~/.ssh
+        echo "$SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        chmod 700 ~/.ssh
+        chmod 600 ~/.ssh/authorized_keys
+        
+        # 4. تغيير إعدادات SSH للسماح بالدخول بكلمة مرور (اختياري، لكن يفضل استخدام المفتاح)
+        # ملاحظة: اسم المستخدم الافتراضي على العدّاد هو 'runner' أو 'ubuntu' حسب البيئة، لكن 'runner' هو الأكثر شيوعًا.
+        echo "PermitRootLogin no" | sudo tee -a /etc/ssh/sshd_config
+        echo "PasswordAuthentication no" | sudo tee -a /etc/ssh/sshd_config
+        sudo service ssh restart
+        echo "SSH setup complete. User 'runner' can connect with the provided key."
+
+    - name: Install ngrok
+      run: |
+        # تثبيت ngrok على العدّاد المستضاف من GitHub (Ubuntu)
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt update && sudo apt install ngrok -y
+
+    - name: Connect ngrok and Get Public URL
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }} # استخدام الرمز السري
+      run: |
+        # تفعيل الرمز المميز وبدء النفق على المنفذ 22 (SSH)
+        ngrok authtoken $NGROK_AUTH_TOKEN
+        ngrok tcp 22 --log=stdout > ngrok.log &
+        sleep 10 # إعطاء وقت لـ ngrok للاتصال
+
+        # الحصول على رابط ngrok العام من واجهة برمجة التطبيقات المحلية
+        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*' | grep -o '[^"]*$')
+        
+        echo "::notice file=ngrok_url.txt::The temporary public SSH address is: $NGROK_URL"
+        echo "------------------------------------------------"
+        echo "عنوان SSH العام المؤقت هو: $NGROK_URL"
+        echo "اسم المستخدم: runner"
+        echo "------------------------------------------------"
+
+    - name: Keep Job Alive (Maximum 6 Hours)
+      run: |
+        echo "الخادم المؤقت يعمل الآن. المهمة ستستمر لمدة 6 ساعات كحد أقصى."
+        echo "لإنهاء الخادم، قم بإلغاء سير العمل يدويًا من واجهة GitHub Actions."
+        sleep 21600 # 6 ساعات * 60 دقيقة * 60 ثانية = 21600 ثانية

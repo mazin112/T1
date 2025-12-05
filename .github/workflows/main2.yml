@@ -1,17 +1,17 @@
-name: Temporary Dual Tunnel (SSH & V2Ray 443) - Fixed
+name: Temporary SSH Tunnel via ngrok (Password Auth)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # يسمح بتشغيل المهمة يدويًا
     inputs:
       ssh_password:
-        description: 'كلمة المرور للاتصال عبر SSH (ستظهر في السجلات!)'
+        description: 'كلمة المرور التي تريد استخدامها للاتصال عبر SSH (ستظهر في السجلات!)'
         required: true
         default: 'MySecurePassword123'
 
 jobs:
-  dual_tunnel:
+  ssh_tunnel:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360 # الحد الأقصى للتشغيل هو 6 ساعات
 
     steps:
     - name: Checkout code
@@ -21,64 +21,51 @@ jobs:
       env:
         SSH_PASSWORD: ${{ github.event.inputs.ssh_password }}
       run: |
+        # 1. تثبيت OpenSSH Server
         sudo apt update
         sudo apt install openssh-server -y
+        
+        # 2. تعيين كلمة المرور للمستخدم 'runner'
         echo "runner:$SSH_PASSWORD" | sudo chpasswd
+        
+        # 3. تعديل إعدادات SSH للسماح بالدخول بكلمة مرور
         sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/g' /etc/ssh/sshd_config
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+        
+        # 4. إعادة تشغيل خدمة SSH
         sudo service ssh restart
-        echo "SSH setup complete on port 22."
+        
+        echo "SSH setup complete. User 'runner' can connect with the provided password."
 
-    - name: Install ngrok and jq
+    - name: Install ngrok
       run: |
+        # تثبيت ngrok على العدّاد المستضاف من GitHub (Ubuntu)
         curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-        sudo apt update && sudo apt install ngrok jq -y
+        sudo apt update && sudo apt install ngrok -y
 
-    - name: Connect ngrok to Dual Ports (SSH 22 & V2Ray 443)
+    - name: Connect ngrok and Get Public URL
       env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }} # استخدام الرمز السري
       run: |
-        ngrok authtoken "$NGROK_AUTH_TOKEN"
+        # تفعيل الرمز المميز وبدء النفق على المنفذ 22 (SSH)
+        ngrok authtoken $NGROK_AUTH_TOKEN
+        ngrok tcp 22 --log=stdout > ngrok.log &
+        sleep 10 # إعطاء وقت لـ ngrok للاتصال
 
-        # نبدأ tunels بدون --label (لأن العلم غير مدعوم هنا)
-        nohup ngrok tcp 22 --log=stdout > ngrok_ssh.log 2>&1 &
-        nohup ngrok tcp 443 --log=stdout > ngrok_v2ray.log 2>&1 &
-
-        # إعطاء وقت لـ ngrok للاتصال
-        sleep 12
-
-        TUNNELS_INFO=$(curl -s http://localhost:4040/api/tunnels)
-
-        # استخراج رابط SSH (مطابقة حسب config.addr الذي قد يكون "22" أو "localhost:22" الخ)
-        SSH_URL=$(echo "$TUNNELS_INFO" | jq -r '.tunnels[] | select(.config.addr == "22" or (.config.addr | endswith(":22"))) | .public_url' | head -n1)
-
-        # استخراج رابط V2Ray (مطابقة لمنفذ 443)
-        V2RAY_URL=$(echo "$TUNNELS_INFO" | jq -r '.tunnels[] | select(.config.addr == "443" or (.config.addr | endswith(":443"))) | .public_url' | head -n1)
-
+        # الحصول على رابط ngrok العام من واجهة برمجة التطبيقات المحلية
+        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*' | grep -o '[^"]*$')
+        
+        echo "::notice file=ngrok_url.txt::The temporary public SSH address is: $NGROK_URL"
         echo "------------------------------------------------"
-        if [ -n "$SSH_URL" ]; then
-          echo "تم فتح نفق SSH:"
-          echo "العنوان: $SSH_URL"
-        else
-          echo "لم يتم العثور على نفق SSH (تفقد سجلات ngrok_ssh.log و ngrok_v2ray.log)."
-        fi
-
-        if [ -n "$V2RAY_URL" ]; then
-          echo "تم فتح نفق V2Ray:"
-          echo "العنوان: $V2RAY_URL"
-        else
-          echo "لم يتم العثور على نفق V2Ray."
-        fi
+        echo "عنوان SSH العام المؤقت هو: $NGROK_URL"
         echo "اسم المستخدم: runner"
         echo "كلمة المرور: ${{ github.event.inputs.ssh_password }}"
         echo "------------------------------------------------"
 
-        # إخراج تحذيري بسيط إلى سجلات GitHub Actions
-        echo "::notice file=ssh_info.txt::SSH Address: $SSH_URL"
-        echo "::notice file=v2ray_info.txt::V2Ray Address: $V2RAY_URL"
-
     - name: Keep Job Alive (Maximum 6 Hours)
       run: |
         echo "الخادم المؤقت يعمل الآن. المهمة ستستمر لمدة 6 ساعات كحد أقصى."
-        sleep 21600
+        echo "لإنهاء الخادم، قم بإلغاء سير العمل يدويًا من واجهة GitHub Actions."
+        sleep 21600 # 6 ساعات * 60 دقيقة * 60 ثانية = 21600 ثانية

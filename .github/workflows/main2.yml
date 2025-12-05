@@ -1,0 +1,118 @@
+name: Temporary V2Ray Server via ngrok (Password Auth)
+
+on:
+  workflow_dispatch: # يسمح بتشغيل المهمة يدويًا
+    inputs:
+      ssh_password:
+        description: 'كلمة المرور التي تريد استخدامها للاتصال عبر SSH (ستظهر في السجلات!)'
+        required: true
+        default: 'MySecurePassword123'
+
+jobs:
+  v2ray_server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # الحد الأقصى للتشغيل هو 6 ساعات
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup SSH Access with Password (Optional, for debugging)
+      env:
+        SSH_PASSWORD: ${{ github.event.inputs.ssh_password }}
+      run: |
+        # هذا الجزء لتمكين وصول SSH بكلمة مرور (غير آمن)
+        sudo apt update
+        sudo apt install openssh-server -y
+        echo "runner:$SSH_PASSWORD" | sudo chpasswd
+        sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+        sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+        sudo service ssh restart
+        echo "SSH setup complete on port 22."
+
+    - name: Install V2Ray and Configure
+      run: |
+        # 1. تثبيت V2Ray (باستخدام سكربت التثبيت الرسمي)
+        bash <(curl -L https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh)
+        
+        # 2. توليد UUID جديد
+        V2RAY_UUID=$(cat /proc/sys/kernel/random/uuid)
+        V2RAY_PORT=10000 # المنفذ الداخلي لـ V2Ray
+        
+        # 3. إنشاء ملف التكوين (config.json) لـ Vmess
+        sudo tee /usr/local/etc/v2ray/config.json > /dev/null << EOF
+{
+"inbounds": [
+  {
+    "port": $V2RAY_PORT,
+    "protocol": "vmess",
+    "settings": {
+      "clients": [
+        {
+          "id": "$V2RAY_UUID",
+          "alterId": 0
+        }
+      ]
+    },
+    "streamSettings": {
+      "network": "tcp"
+    }
+  }
+],
+"outbounds": [
+  {
+    "protocol": "freedom",
+    "settings": {}
+  }
+]
+}
+EOF
+        
+        # 4. تشغيل خدمة V2Ray
+        sudo systemctl start v2ray
+        
+        echo "V2RAY_UUID=$V2RAY_UUID" >> $GITHUB_ENV
+        echo "V2RAY_PORT=$V2RAY_PORT" >> $GITHUB_ENV
+        echo "V2Ray installed and configured on port $V2RAY_PORT with UUID: $V2RAY_UUID"
+
+    - name: Install ngrok
+      run: |
+        # تثبيت ngrok
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt update && sudo apt install ngrok -y
+
+    - name: Connect ngrok to V2Ray Port and Get Public URL
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }} # استخدام الرمز السري
+        V2RAY_PORT: ${{ env.V2RAY_PORT }}
+      run: |
+        # تفعيل الرمز المميز وبدء النفق على منفذ V2Ray (10000)
+        ngrok authtoken $NGROK_AUTH_TOKEN
+        ngrok tcp ${{ env.V2RAY_PORT }} --log=stdout > ngrok.log &
+        sleep 10 # إعطاء وقت لـ ngrok للاتصال
+
+        # الحصول على رابط ngrok العام من واجهة برمجة التطبيقات المحلية
+        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*' | grep -o '[^"]*$')
+        
+        # استخراج العنوان والمنفذ
+        NGROK_ADDRESS=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f1)
+        NGROK_EXTERNAL_PORT=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f2)
+        
+        echo "::notice file=v2ray_config.txt::V2Ray UUID: ${{ env.V2RAY_UUID }}"
+        echo "::notice file=v2ray_config.txt::V2Ray Address: $NGROK_ADDRESS"
+        echo "::notice file=v2ray_config.txt::V2Ray Port: $NGROK_EXTERNAL_PORT"
+        
+        echo "------------------------------------------------"
+        echo "تم إعداد خادم V2Ray بنجاح!"
+        echo "UUID: ${{ env.V2RAY_UUID }}"
+        echo "العنوان (Address): $NGROK_ADDRESS"
+        echo "المنفذ (Port): $NGROK_EXTERNAL_PORT"
+        echo "البروتوكول: Vmess"
+        echo "------------------------------------------------"
+
+    - name: Keep Job Alive (Maximum 6 Hours)
+      run: |
+        echo "الخادم المؤقت يعمل الآن. المهمة ستستمر لمدة 6 ساعات كحد أقصى."
+        echo "لإنهاء الخادم، قم بإلغاء سير العمل يدويًا من واجهة GitHub Actions."
+        sleep 21600 # 6 ساعات * 60 دقيقة * 60 ثانية = 21600 ثانية

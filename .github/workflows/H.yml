@@ -125,7 +125,46 @@ jobs:
         Start-Sleep -Seconds 3
 
         Write-Host "Ngrok started with PID: $($p.Id)"
-        Write-Host "إن لم يظهر الرابط هنا، تحقق من لوحة ngrok dashboard أو سجلات runner."
+        Write-Host "إن لم يظهر الرابط هنا، سيتم محاولة استرجاعه في الخطوة التالية."
+
+    - name: Get Ngrok Tunnel Info
+      run: |
+        Write-Host "Waiting for ngrok to initialize..."
+        Start-Sleep -Seconds 5
+
+        try {
+          $response = Invoke-WebRequest -Uri "http://127.0.0.1:4040/api/tunnels" -UseBasicParsing -ErrorAction Stop
+        } catch {
+          Write-Error "فشل الاتصال بواجهة ngrok المحلية على 127.0.0.1:4040. قد لا يكون inspector مفعلًا أو ngrok لم يبدأ بعد."
+          exit 1
+        }
+
+        $json = $response.Content | ConvertFrom-Json
+
+        if (-not $json.tunnels -or $json.tunnels.Count -eq 0) {
+          Write-Error "لم يتم العثور على أي نفق ngrok. تأكد أن النفق يعمل."
+          exit 1
+        }
+
+        Write-Host "=== ngrok tunnels ==="
+        foreach ($tunnel in $json.tunnels) {
+          Write-Host "proto: $($tunnel.proto) | name: $($tunnel.name) | url: $($tunnel.public_url)"
+        }
+
+        # طباعة رابط الـ TCP بصيغة مبسطة للاستخدام مع Remote Desktop
+        $tcp = $json.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+        if ($tcp) {
+          # public_url عادة تكون tcp://0.tcp.ngrok.io:xxxxx
+          $public = $tcp.public_url
+          Write-Host "==========================="
+          Write-Host "🔗 RDP اتصال عبر ngrok (public_url):"
+          Write-Host $public
+          Write-Host "استخدم هذا مع Remote Desktop. اسم المستخدم: tempAdmin و كلمة المرور: SECRET ADMIN_PASSWORD"
+          Write-Host "مثال: host = 0.tcp.ngrok.io   port = 12345"
+          Write-Host "==========================="
+        } else {
+          Write-Host "لا يوجد نفق TCP. قد يكون ngrok أنشأ HTTP فقط."
+        }
 
     - name: Complete job
       run: |

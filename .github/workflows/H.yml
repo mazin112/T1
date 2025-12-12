@@ -29,7 +29,7 @@ jobs:
 
     - name: Enable RDP Access
       run: |
-        Write-Host "تمكين Remote Desktop وفتج جدار الحماية..."
+        Write-Host "تمكين Remote Desktop وفتح جدار الحماية..."
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
@@ -119,13 +119,13 @@ jobs:
           exit 1
         }
         Write-Host "Starting ngrok in background (tcp 3389)..."
-        Start-Process -FilePath $ngrokPath -ArgumentList "tcp 3389" -NoNewWindow -WindowStyle Hidden
+        # نستخدم WindowStyle و PassThru، ولا نستخدم NoNewWindow
+        $p = Start-Process -FilePath $ngrokPath -ArgumentList "tcp 3389" -WindowStyle Hidden -PassThru
 
         Start-Sleep -Seconds 3
 
-        # محاولة قراءة ملف التكوين أو سجل ngrok (قد لا يظهر رابط مباشر في runner)
-        Write-Host "Ngrok started. إن لم يظهر الرابط هنا، تحقق من لوحة ngrok dashboard أو سجلات runner."
-        # ملاحظة: لاسترجاع العنوان العام تلقائياً يتطلب إعداد API أو قراءة سجل ngrok، وهذا يتطلب تكوين إضافي.
+        Write-Host "Ngrok started with PID: $($p.Id)"
+        Write-Host "إن لم يظهر الرابط هنا، تحقق من لوحة ngrok dashboard أو سجلات runner."
 
     - name: Complete job
       run: |

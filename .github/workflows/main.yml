@@ -6,37 +6,42 @@ on:
         description: 'Past the ngrok Windows (amd64) ZIP direct download link here'
         required: true
         default: 'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip'
- 
+
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2019 # تم التغيير إلى ويندوز سيرفر 2019 (الأقرب لويندوز 10)
     steps:
-      - name: Download and Extract ngrok
-        run: |
-          Invoke-WebRequest -Uri "${{ github.event.inputs.ngrok_download_url }}" -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
- 
-      - name: Authenticate ngrok
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
- 
-      - name: Configure RDP and Create Admin User
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          New-LocalUser "NTechDz" -Password (ConvertTo-SecureString -AsPlainText "W1nd0ws-P4ssw0rd-2025!" -Force) -FullName "NTechDz User"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "NTechDz"
-          Add-LocalGroupMember -Group "Administrators" -Member "NTechDz"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
- 
-      - name: Start RDP Tunnel
-        run: |
-          Write-Host "======================================================================"
-          Write-Host "            RDP Connection Details - NTechDz Channel"
-          Write-Host "======================================================================"
-          Write-Host "Username:    NTechDz (Administrator)"
-          Write-Host "Password:    W1nd0ws-P4ssw0rd-2025!"
-          Write-Host "Please find the RDP Address in the ngrok logs below."
-          Write-Host "======================================================================"
-          .\ngrok\ngrok.exe tcp 3389 --log=stdout
+    - name: Download and Extract ngrok
+      run: |
+        Invoke-WebRequest -Uri "${{ github.event.inputs.ngrok_download_url }}" -OutFile ngrok.zip
+        Expand-Archive ngrok.zip
+
+    - name: Authenticate ngrok
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+
+    - name: Install Brave Browser
+      run: |
+        Invoke-WebRequest -Uri "https://laptop-updates.brave.com/latest/winx64" -OutFile brave_installer.exe
+        Start-Process -FilePath ".\brave_installer.exe" -ArgumentList "/silent /install" -Wait
+
+    - name: Configure RDP and Create Admin User
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        New-LocalUser "Mazin" -Password (ConvertTo-SecureString -AsPlainText "Mazo778877@" -Force) -FullName "Mazin User"
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Mazin"
+        Add-LocalGroupMember -Group "Administrators" -Member "Mazin"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+
+    - name: Start RDP Tunnel
+      run: |
+        Write-Host "======================================================================"
+        Write-Host "            RDP Connection Details"
+        Write-Host "======================================================================"
+        Write-Host "Username:    Mazin (Administrator)"
+        Write-Host "Password:    Mazo778877@"
+        Write-Host "Please find the RDP Address in the ngrok logs below."
+        Write-Host "======================================================================"
+        .\ngrok\ngrok.exe tcp 3389 --log=stdout

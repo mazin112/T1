@@ -13,39 +13,86 @@ jobs:
       run: |
         Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
         Expand-Archive ngrok.zip -DestinationPath .\ngrok
-        dir .\ngrok
+        Write-Host "ngrok files:"
+        Get-ChildItem .\ngrok
 
     - name: Setup Ngrok Auth Token
-      run: .\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      run: |
+        if (-not $Env:NGROK_AUTH_TOKEN) {
+          Write-Error "لا يوجد NGROK_AUTH_TOKEN في Secrets. أضف المفتاح ثم أعد التشغيل."
+          exit 1
+        }
+        .\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
+        Write-Host "Ngrok authtoken saved."
 
     - name: Enable RDP Access
       run: |
-        # تمكين Remote Desktop
+        Write-Host "تمكين Remote Desktop وفتج جدار الحماية..."
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        # السماح بقواعد جدار الحماية الخاصة بالـ Remote Desktop
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        # تفعيل مصادقة المستخدم (NLA)
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+        Write-Host "RDP enabled."
 
-    - name: Create User (meets password policy)
+    - name: Create User (meets password policy & avoids interactive prompt)
       env:
         ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       run: |
-        # اسم المستخدم المُقترح - عدّله إذا رغبت
-        $user = 'tempAdmin'
-        # جلب كلمة المرور من Secret بطريقة آمنة
+        # إعداد المتغيرات
+        $user = "tempAdmin"
         $pass = $Env:ADMIN_PASSWORD
 
-        Write-Host "إنشاء المستخدم $user ..."
-        # إنشاء المستخدم بكلمة المرور من المتغير
-        net user $user $pass /add
+        # التحقق من وجود السر
+        if (-not $pass) {
+          Write-Error "لم يتم العثور على SECRET باسم ADMIN_PASSWORD. أضفه في Settings -> Secrets ثم أعد المحاولة."
+          exit 1
+        }
+
+        # فحوصات كلمة المرور (min 8, complexity, max 14 to avoid interactive prompt)
+        if ($pass.Length -lt 8) {
+          Write-Error "كلمة المرور قصيرة جداً. يجب أن تكون 8 أحرف على الأقل."
+          exit 1
+        }
+        if ($pass.Length -gt 14) {
+          Write-Error "كلمة المرور أطول من 14 حرفاً. قلّل الطول إلى 14 أو أقل لتجنب رسالة التأكيد القديمة."
+          exit 1
+        }
+        if (-not ($pass -match '[A-Z]')) {
+          Write-Error "كلمة المرور يجب أن تحتوي على حرف كبير (A-Z)."
+          exit 1
+        }
+        if (-not ($pass -match '[a-z]')) {
+          Write-Error "كلمة المرور يجب أن تحتوي على حرف صغير (a-z)."
+          exit 1
+        }
+        if (-not ($pass -match '\d')) {
+          Write-Error "كلمة المرور يجب أن تحتوي على رقم."
+          exit 1
+        }
+        if (-not ($pass -match '[^A-Za-z0-9]')) {
+          Write-Error "كلمة المرور يجب أن تحتوي على رمز خاص (مثل ! @ # $ % ^ & * )."
+          exit 1
+        }
+
+        Write-Host "قيد الإنشاء: المستخدم $user ..."
+        # نستخدم علامات اقتباس حول كلمة المرور لتفادي مشاكل الحروف الخاصة
+        net user $user "$pass" /add /y
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "فشل إنشاء المستخدم. تحقق من السجلات."
+          exit $LASTEXITCODE
+        }
 
         Write-Host "إضافة $user لمجموعة Administrators ..."
         net localgroup administrators $user /add
 
-        Write-Host "التحقق من وجود المستخدم:"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "فشل إضافة المستخدم لمجموعة Administrators."
+          exit $LASTEXITCODE
+        }
+
+        Write-Host "تم إنشاء الحساب وإضافته للمسؤولين بنجاح."
         net user $user
 
     - name: Install Google Chrome
@@ -59,22 +106,27 @@ jobs:
     - name: Install Firefox
       run: |
         Write-Host "Downloading Firefox..."
-        Invoke-WebRequest -Uri "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=ar" -OutFile "$env:TEMP\firefox_installer.exe"
+        Invoke-WebRequest -Uri "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=en-US" -OutFile "$env:TEMP\firefox_installer.exe"
         Write-Host "Installing Firefox..."
         Start-Process -FilePath "$env:TEMP\firefox_installer.exe" -Args "/S" -Wait
         Write-Host "Firefox installed successfully!"
 
     - name: Start Ngrok Tunnel (background)
       run: |
-        # تشغيل ngrok في الخلفية حتى لا يوقف الـ workflow
         $ngrokPath = ".\ngrok\ngrok.exe"
-        Write-Host "Starting ngrok tunnel (background)..."
+        if (-not (Test-Path $ngrokPath)) {
+          Write-Error "لم يتم العثور على ngrok في المسار: $ngrokPath"
+          exit 1
+        }
+        Write-Host "Starting ngrok in background (tcp 3389)..."
         Start-Process -FilePath $ngrokPath -ArgumentList "tcp 3389" -NoNewWindow -WindowStyle Hidden
 
-        # لمحة سريعة في السجلات (قد لا تحتوي على رابط مباشر هنا)
         Start-Sleep -Seconds 3
-        Write-Host "Ngrok started. تحقق من لوحة تحكم ngrok dashboard أو سجلات runner لمزيد من التفاصيل."
+
+        # محاولة قراءة ملف التكوين أو سجل ngrok (قد لا يظهر رابط مباشر في runner)
+        Write-Host "Ngrok started. إن لم يظهر الرابط هنا، تحقق من لوحة ngrok dashboard أو سجلات runner."
+        # ملاحظة: لاسترجاع العنوان العام تلقائياً يتطلب إعداد API أو قراءة سجل ngrok، وهذا يتطلب تكوين إضافي.
 
     - name: Complete job
       run: |
-        Write-Host "انتهى الإجراء. تذكّر: الـ runner مؤقت وسيُغلق بعد انتهاء الـ job."
+        Write-Host "انتهى الـ workflow. تذكّر أن الـ GitHub Actions runner مؤقت (ephemeral) وسيتم إيقافه بعد انتهاء المهمة."

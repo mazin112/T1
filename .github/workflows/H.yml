@@ -1,0 +1,50 @@
+name: Windows 11 RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 9999
+
+    steps:
+    - name: Download Ngrok
+      run: |
+        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive ngrok.zip
+        
+    - name: Setup Ngrok Auth Token
+      run: .\ngrok\ngrok.exe config add-authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        
+    - name: Enable RDP Access
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        
+    - name: Create User
+      run: |
+        net user admin 1234 /add
+        net localgroup administrators admin /add
+        
+    - name: Install Google Chrome
+      run: |
+        Write-Host "Downloading Chrome..."
+        Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "$env:TEMP\chrome_installer.exe"
+        Write-Host "Installing Chrome..."
+        Start-Process -FilePath "$env:TEMP\chrome_installer.exe" -Args "/silent /install" -Wait
+        Write-Host "Chrome installed successfully!"
+        
+    - name: Install Firefox
+      run: |
+        Write-Host "Downloading Firefox..."
+        Invoke-WebRequest -Uri "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=ar" -OutFile "$env:TEMP\firefox_installer.exe"
+        Write-Host "Installing Firefox..."
+        Start-Process -FilePath "$env:TEMP\firefox_installer.exe" -Args "/S" -Wait
+        Write-Host "Firefox installed successfully!"
+        
+    - name: Start Ngrok Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389

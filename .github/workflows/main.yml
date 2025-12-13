@@ -9,7 +9,7 @@ on:
  
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2019  # Windows 10 (بدلاً من windows-latest الذي يستخدم Windows 11)
     steps:
       - name: Download and Extract ngrok
         run: |
@@ -26,9 +26,18 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           New-LocalUser "Mazin" -Password (ConvertTo-SecureString -AsPlainText "Mazo778877@" -Force) -FullName "Mazin User"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "NTechDz"
-          Add-LocalGroupMember -Group "Administrators" -Member "NTechDz"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Mazin"
+          Add-LocalGroupMember -Group "Administrators" -Member "Mazin"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+ 
+      - name: Install Brave Browser
+        run: |
+          Write-Host "Downloading and Installing Brave Browser..."
+          $braveInstallerUrl = "https://referrals.brave.com/latest/BraveBrowserSetup.exe"
+          $installerPath = "$env:TEMP\BraveBrowserSetup.exe"
+          Invoke-WebRequest -Uri $braveInstallerUrl -OutFile $installerPath
+          Start-Process -FilePath $installerPath -ArgumentList "/silent", "/install" -Wait
+          Write-Host "Brave Browser installed successfully!"
  
       - name: Start RDP Tunnel
         run: |
@@ -37,6 +46,8 @@ jobs:
           Write-Host "======================================================================"
           Write-Host "Username:    Mazin (Administrator)"
           Write-Host "Password:    Mazo778877@"
+          Write-Host "OS:          Windows 10"
+          Write-Host "Browser:     Brave Browser (Installed)"
           Write-Host "Please find the RDP Address in the ngrok logs below."
           Write-Host "======================================================================"
           .\ngrok\ngrok.exe tcp 3389 --log=stdout
